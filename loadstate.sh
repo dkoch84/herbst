@@ -28,7 +28,7 @@ get_launch_command() {
                 echo "qutebrowser"
             else
                 # Second qutebrowser instance = Element
-                echo "qutebrowser.matrix https://app.element.io/?pk_vid=363f734cc68968df1659978627afbc6c#/room/!UDQUAzsPpbcPRJevFT:matrix.org"
+                echo "qutebrowser.matrix https://app.element.io"
             fi
             ;;
         Alacritty)
