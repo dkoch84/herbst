@@ -17,31 +17,38 @@ hc() { "${herbstclient_command[@]:-herbstclient}" "$@" ;}
 
 # === LAUNCH COMMAND MAPPING ===
 # Edit this function to customize how apps are launched
-# Arguments: $1 = window class, $2 = instance number (for duplicate classes in same frame)
+# Argument: $1 = window token from savestate.sh (usually the window class;
+# see get_window_class there for the variants)
 get_launch_command() {
     local class="$1"
-    local instance="${2:-1}"  # 1-indexed instance number
 
     case "$class" in
         qutebrowser)
-            if [[ "$instance" == "1" ]]; then
-                echo "qutebrowser"
-            else
-                # Second qutebrowser instance = Element
-                echo "qutebrowser.matrix https://app.element.io"
-            fi
+            echo "qutebrowser"
+            ;;
+        qutebrowser:matrix)
+            echo "qutebrowser.matrix https://app.element.io"
+            ;;
+        qutebrowser:1)
+            echo "qutebrowser.wrapper https://youtube.com"
+            ;;
+        qutebrowser:*)
+            echo "qutebrowser.wrapper -r ${class#qutebrowser:}"
+            ;;
+        focus-dash)
+            echo "focus-dash"
             ;;
         Alacritty)
             echo "alacritty"
             ;;
-        Slack)
+        Slack|slack)
             echo "slack"
             ;;
-        Code)
+        Code|code)
             echo "code"
             ;;
         Google-chrome)
-            echo "google-chrome-stable"
+            echo "$HOME/scripts/utils/chrome-debug"
             ;;
         microsoft-edge)
             echo "microsoft-edge-stable"
@@ -56,52 +63,47 @@ get_launch_command() {
     esac
 }
 
-# Apps that are slow to start and need explicit waiting
-SLOW_APPS="Slack"
+# Seconds to wait for a launched app's window before moving on. Waiting keeps
+# the frame focused until the window lands in it.
+WINDOW_TIMEOUT=20
 
-# Wait for a window of given class to appear
+# Count all managed windows
+client_count() {
+    hc attr clients 2>/dev/null | grep -cE '0x[0-9a-fA-F]+'
+}
+
+# Wait until the number of windows exceeds $1
 wait_for_window() {
-    local class="$1"
-    local timeout="${2:-15}"
-    local count=0
+    local before="$1"
+    local class="$2"
+    local waited=0
 
-    echo "    Waiting for $class window..."
-    while [[ $count -lt $timeout ]]; do
-        # Check if a window with this class exists
-        for winid in $(hc list_clients 2>/dev/null); do
-            win_class=$(hc get_attr "clients.$winid.class" 2>/dev/null)
-            if [[ "$win_class" == "$class" ]]; then
-                echo "    $class window appeared"
-                return 0
-            fi
-        done
-        sleep 1
-        ((count++))
+    while (( waited < WINDOW_TIMEOUT * 10 )); do
+        if (( $(client_count) > before )); then
+            return 0
+        fi
+        sleep 0.1
+        ((waited++))
     done
-    echo "    Warning: $class window did not appear within ${timeout}s"
+    echo "    Warning: $class window did not appear within ${WINDOW_TIMEOUT}s"
     return 1
 }
 
-# Launch an app and optionally wait for its window
+# Launch an app and wait for its window
 launch_app() {
     local class="$1"
-    local instance="${2:-1}"
-    local cmd=$(get_launch_command "$class" "$instance")
+    local cmd=$(get_launch_command "$class")
 
     if [[ -n "$cmd" ]]; then
         if [[ "$DRY_RUN" == true ]]; then
             echo "    [DRY-RUN] Would launch: $cmd"
         else
             echo "  Launching: $cmd"
+            local before=$(client_count)
             # Use herbstclient spawn like autostart does
             hc spawn $cmd
-
-            # Wait for slow apps to actually appear
-            if [[ " $SLOW_APPS " =~ " $class " ]]; then
-                wait_for_window "$class"
-            else
-                sleep 1.0  # Brief pause for fast apps
-            fi
+            wait_for_window "$before" "$class"
+            sleep 0.5  # Let the window settle before focus moves on
         fi
     fi
 }
@@ -117,10 +119,6 @@ process_state() {
     local current_frame_pos=0  # Track which frame we're at within a tag
     local need_frame_reset=true  # Flag to reset to frame 0 when starting a new tag
     local skip_current_tag=false
-
-    # Track class instances GLOBALLY across the entire state file
-    # This allows "second qutebrowser overall = Element"
-    declare -A global_class_counts
 
     while IFS= read -r line || [[ -n "$line" ]]; do
         # Skip empty lines
@@ -199,8 +197,7 @@ process_state() {
 
             # Launch each app in this frame
             for class in $classes; do
-                global_class_counts[$class]=$(( ${global_class_counts[$class]:-0} + 1 ))
-                launch_app "$class" "${global_class_counts[$class]}"
+                launch_app "$class"
             done
 
             # Small delay to let windows settle

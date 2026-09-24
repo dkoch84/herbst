@@ -51,24 +51,27 @@ FRAME 2 Code
 - `TAG` - Tag name
 - `MONITOR` - Monitor index to display the tag on
 - `LAYOUT` - Herbstluftwm layout tree (from `hc dump`)
-- `FRAME` - Frame index followed by window classes in that frame
+- `FRAME` - Frame index followed by window tokens in that frame
+
+A window token is normally the window class. Windows that share a class but come from different launchers get their own token:
+
+- `focus-dash` - the Focus dashboard qutebrowser (X11 instance `focus-dash`)
+- `qutebrowser:NAME` - a qutebrowser started through a session wrapper (`--basedir .../qutebrowser/NAME`), e.g. `qutebrowser:matrix` for Element, `qutebrowser:1` for the YouTube window
 
 ## Customizing launch commands
 
-Edit `get_launch_command()` in `loadstate.sh` to map window classes to launch commands:
+Edit `get_launch_command()` in `loadstate.sh` to map window tokens to launch commands:
 
 ```bash
 get_launch_command() {
     local class="$1"
-    local instance="${2:-1}"  # For multiple windows of same class
 
     case "$class" in
         qutebrowser)
-            if [[ "$instance" == "1" ]]; then
-                echo "qutebrowser"
-            else
-                echo "qutebrowser.matrix https://app.element.io/..."
-            fi
+            echo "qutebrowser"
+            ;;
+        qutebrowser:matrix)
+            echo "qutebrowser.matrix https://app.element.io/..."
             ;;
         Alacritty)
             echo "alacritty"
@@ -81,7 +84,7 @@ get_launch_command() {
 }
 ```
 
-The `instance` parameter tracks multiple windows of the same class globally across the state file, allowing different launch commands for each (e.g., first qutebrowser = regular, second = Element).
+Each launch waits (up to `WINDOW_TIMEOUT` seconds) for a new window to appear before moving to the next frame, so slow starters still land where they belong.
 
 ## Files
 
