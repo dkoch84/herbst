@@ -15,10 +15,13 @@ fi
 
 hc() { "${herbstclient_command[@]:-herbstclient}" "$@" ;}
 
+# get_window_token: the same token savestate.sh wrote for a window
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/window-token.sh"
+
 # === LAUNCH COMMAND MAPPING ===
 # Edit this function to customize how apps are launched
 # Argument: $1 = window token from savestate.sh (usually the window class;
-# see get_window_class there for the variants)
+# see get_window_token in window-token.sh for the variants)
 get_launch_command() {
     local class="$1"
 
@@ -67,6 +70,10 @@ get_launch_command() {
 # the frame focused until the window lands in it.
 WINDOW_TIMEOUT=20
 
+# Seconds place_windows waits for late windows before placing what it has.
+# focus-dash alone may wait up to 60s for its server.
+PLACE_TIMEOUT=90
+
 # Count all managed windows
 client_count() {
     hc attr clients 2>/dev/null | grep -cE '0x[0-9a-fA-F]+'
@@ -106,6 +113,77 @@ launch_app() {
             sleep 0.5  # Let the window settle before focus moves on
         fi
     fi
+}
+
+# What the state file asked for, filled in by process_state and used by
+# place_windows once everything is launched
+declare -a PLACE_TAGS=()           # tags in file order
+declare -A PLACE_LAYOUT=()         # tag -> layout without window IDs
+declare -A PLACE_FRAMES=()         # "tag frame" -> tokens
+declare -A PLACE_WANTED=()         # tag -> set when it has any windows
+
+# Launching only puts a window in whichever frame has focus when it finally
+# maps, and some apps (focus-dash waits for its server) map late. So once
+# everything is launched, match each expected token to a real window and
+# reload every layout with the window IDs filled in: hlwm then moves each
+# window into its saved frame no matter where it landed.
+place_windows() {
+    local timeout="$PLACE_TIMEOUT"
+    local -A pool=()               # token -> unclaimed window IDs
+    local -A need=()               # token -> how many windows the file asks for
+    local winid token tag layout frame out rest ids key missing
+
+    for key in "${!PLACE_FRAMES[@]}"; do
+        for token in ${PLACE_FRAMES[$key]}; do
+            need[$token]=$(( ${need[$token]:-0} + 1 ))
+        done
+    done
+
+    # Wait until every expected window exists (or give up and place the rest)
+    while :; do
+        pool=()
+        for winid in $(hc attr clients 2>/dev/null | grep -oE '0x[0-9a-fA-F]+'); do
+            token=$(get_window_token "$winid")
+            [[ -n "$token" ]] && pool[$token]+=" $winid"
+        done
+
+        missing=0
+        for token in "${!need[@]}"; do
+            ids=(${pool[$token]})
+            (( ${#ids[@]} < ${need[$token]} )) && missing=1
+        done
+
+        (( missing == 0 || timeout-- <= 0 )) && break
+        sleep 1
+    done
+
+    for tag in "${PLACE_TAGS[@]}"; do
+        [[ -z "${PLACE_WANTED[$tag]}" ]] && continue   # no windows saved here
+        layout="${PLACE_LAYOUT[$tag]}"
+        out=""
+        frame=0
+        # Walk the (clients ...) nodes in the same order savestate.sh numbered them
+        while [[ "$layout" == *"(clients"* ]]; do
+            rest="${layout#*(clients}"
+            out+="${layout%%(clients*}(clients${rest%%)*}"
+            rest="${rest#*)}"
+            for token in ${PLACE_FRAMES["$tag $frame"]}; do
+                ids=(${pool[$token]})
+                if (( ${#ids[@]} > 0 )); then
+                    out+=" ${ids[0]}"
+                    pool[$token]="${ids[*]:1}"
+                else
+                    echo "  Warning: no $token window to place in tag $tag frame $frame"
+                fi
+            done
+            out+=")"
+            layout="$rest"
+            ((frame++))
+        done
+        out+="$layout"
+        hc load "$tag" "$out"
+    done
+    echo "Placed windows into their saved frames"
 }
 
 # Tags to skip (float/scratchpad tags managed by autostart)
@@ -159,6 +237,8 @@ process_state() {
             else
                 hc add "$current_tag" 2>/dev/null
                 hc load "$current_tag" "$current_layout"
+                PLACE_TAGS+=("$current_tag")
+                PLACE_LAYOUT[$current_tag]="$current_layout"
                 echo "  Loaded layout for tag $current_tag"
             fi
 
@@ -196,6 +276,8 @@ process_state() {
             fi
 
             # Launch each app in this frame
+            PLACE_FRAMES["$current_tag $frame_num"]="$classes"
+            PLACE_WANTED[$current_tag]=1
             for class in $classes; do
                 launch_app "$class"
             done
@@ -215,6 +297,10 @@ if [[ -n "$1" && -f "$1" ]]; then
 else
     # Read from stdin
     process_state
+fi
+
+if [[ "$DRY_RUN" != true ]]; then
+    place_windows
 fi
 
 if [[ "$DRY_RUN" == true ]]; then

@@ -17,32 +17,8 @@ strip_window_ids() {
     echo "$1" | sed -E 's/0x[0-9a-fA-F]+//g' | sed -E 's/  +/ /g'
 }
 
-# Get the token loadstate.sh uses to relaunch a window. Usually the window
-# class, but windows sharing a class are told apart where it matters:
-#   focus-dash          the Focus dashboard (its own X11 instance name)
-#   qutebrowser:NAME    a qutebrowser session wrapper (--basedir .../qutebrowser/NAME)
-get_window_class() {
-    local winid="$1"
-    local class instance pid basedir
-    class=$(hc get_attr "clients.$winid.class" 2>/dev/null) || return
-    instance=$(hc get_attr "clients.$winid.instance" 2>/dev/null)
-
-    if [[ "$instance" == "focus-dash" ]]; then
-        echo "focus-dash"
-        return
-    fi
-
-    if [[ "$class" == "qutebrowser" ]]; then
-        pid=$(hc get_attr "clients.$winid.pid" 2>/dev/null)
-        basedir=$(tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null | grep -A1 -x -- '--basedir' | tail -n1)
-        if [[ "$basedir" =~ /qutebrowser/([^/]+)$ ]]; then
-            echo "qutebrowser:${BASH_REMATCH[1]}"
-            return
-        fi
-    fi
-
-    echo "$class"
-}
+# get_window_token: the token loadstate.sh relaunches a window by
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/window-token.sh"
 
 # Parse a layout tree and output frame contents in depth-first order
 # This walks the tree structure and for each "clients" node, outputs the windows
@@ -104,7 +80,7 @@ hc complete 1 use | while read -r tag; do
     # Build window ID to class mapping
     winid_to_class=""
     for winid in $(extract_window_ids "$layout"); do
-        class=$(get_window_class "$winid")
+        class=$(get_window_token "$winid")
         if [[ -n "$class" ]]; then
             winid_to_class+="$winid=$class"$'\n'
         fi

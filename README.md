@@ -84,12 +84,15 @@ get_launch_command() {
 }
 ```
 
-Each launch waits (up to `WINDOW_TIMEOUT` seconds) for a new window to appear before moving to the next frame, so slow starters still land where they belong.
+Each launch waits (up to `WINDOW_TIMEOUT` seconds) for a new window to appear before moving to the next frame. Some apps map their window much later than that (focus-dash waits for its server), so once everything is launched `loadstate.sh` matches every saved token to a real window and reloads each layout with the window IDs filled in. herbstluftwm then moves each window into its saved frame no matter where it first landed.
+
+The token logic lives in `window-token.sh`, which both scripts source, so saving and restoring always agree.
 
 ## Files
 
 - `savestate.sh` - Captures current herbstluftwm state
 - `loadstate.sh` - Restores state and launches apps
+- `window-token.sh` - Shared window token logic
 - `mystate` - Example saved state file
 
 ## Notes
